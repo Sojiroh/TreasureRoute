@@ -1,0 +1,156 @@
+name: Release TreasureRoute
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+
+    env:
+      Solution_Name: TreasureRoute
+      Plugin_Project: .\TreasureRoute\TreasureRoute.csproj
+      Plugin_InternalName: TreasureRoute
+      Plugin_ZipName: TreasureRoute.zip
+      Packaged_Zip: .\TreasureRoute\bin\x64\Release\TreasureRoute\latest.zip
+      Custom_Repository: Sojiroh/SojirohPlugins
+
+    steps:
+      - name: Checkout TreasureRoute
+        uses: actions/checkout@v5
+
+      - name: Read plugin version
+        id: plugin_version
+        run: |
+          [xml]$project = Get-Content $env:Plugin_Project
+          $version = $project.Project.PropertyGroup.Version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Could not read <Version> from $env:Plugin_Project"
+          }
+
+          $expectedTag = "v$version"
+          $actualTag = "${{ github.ref_name }}"
+          if ($actualTag -ne $expectedTag) {
+            throw "Release tag '$actualTag' must match project version '$version' as '$expectedTag'."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Dalamud
+        run: |
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip "$env:AppData\XIVLauncher\addon\Hooks\dev"
+
+      - name: Build with dotnet
+        run: dotnet build "$env:Solution_Name.sln" --configuration Release --property:Platform=x64
+
+      - name: Run tests
+        run: dotnet run --project .\TreasureRoute.Tests\TreasureRoute.Tests.csproj --configuration Release --property:Platform=x64
+
+      - name: Prepare release asset
+        run: |
+          if (!(Test-Path $env:Packaged_Zip)) {
+            throw "Expected package not found at $env:Packaged_Zip"
+          }
+
+          New-Item -ItemType Directory -Force -Path .\artifacts | Out-Null
+          Copy-Item $env:Packaged_Zip ".\artifacts\$env:Plugin_ZipName" -Force
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          PLUGIN_VERSION: ${{ steps.plugin_version.outputs.version }}
+        run: |
+          $asset = ".\artifacts\$env:Plugin_ZipName"
+          $notes = "TreasureRoute $env:PLUGIN_VERSION`n`nAutomated release for $env:TAG_NAME."
+
+          gh release view $env:TAG_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG_NAME $asset --clobber
+          } else {
+            gh release create $env:TAG_NAME $asset --title $env:TAG_NAME --notes $notes --verify-tag
+          }
+
+      - name: Checkout custom plugin repository
+        uses: actions/checkout@v5
+        with:
+          repository: Sojiroh/SojirohPlugins
+          token: ${{ secrets.CUSTOM_REPO_TOKEN }}
+          path: custom-repository
+
+      - name: Update custom repository entry
+        env:
+          PLUGIN_VERSION: ${{ steps.plugin_version.outputs.version }}
+          TAG_NAME: ${{ github.ref_name }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+        run: |
+          $assetUrl = "https://github.com/$env:SOURCE_REPOSITORY/releases/download/$env:TAG_NAME/$env:Plugin_ZipName"
+          $lastUpdate = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+          $entry = [ordered]@{
+            Author = "Sojiroh"
+            Name = "Treasure Route"
+            InternalName = $env:Plugin_InternalName
+            AssemblyVersion = $env:PLUGIN_VERSION
+            RepoUrl = "https://github.com/$env:SOURCE_REPOSITORY"
+            ApplicableVersion = "any"
+            DalamudApiLevel = 15
+            Punchline = "Plans the optimal treasure-map route for your party."
+            Description = "Listens for treasure-map coordinates posted in party chat, groups them by zone, and shows the shortest aetheryte-rooted route per map. Use /troute to open the window."
+            IsHide = $false
+            IsTestingExclusive = $false
+            DownloadLinkInstall = $assetUrl
+            DownloadLinkUpdate = $assetUrl
+            LastUpdate = $lastUpdate
+            Tags = @("treasure", "map", "route", "party")
+            CategoryTags = @("utility")
+          }
+
+          New-Item -ItemType Directory -Force -Path .\custom-repository\entries | Out-Null
+          $entry | ConvertTo-Json -Depth 10 | Set-Content .\custom-repository\entries\TreasureRoute.json -Encoding UTF8
+
+          Push-Location .\custom-repository
+          node .\scripts\generate-pluginmaster.mjs
+
+          git add entries\TreasureRoute.json pluginmaster.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Custom repository metadata is already up to date."
+          } else {
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Update TreasureRoute to $env:PLUGIN_VERSION"
+
+            $pushed = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              git push
+              if ($LASTEXITCODE -eq 0) {
+                $pushed = $true
+                break
+              }
+
+              Write-Warning "Push attempt $attempt failed; rebasing on origin/main before retry."
+              git pull --rebase origin main
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to rebase custom repository before retry."
+              }
+            }
+
+            if (-not $pushed) {
+              throw "Failed to push custom repository metadata after 3 attempts."
+            }
+          }
+          Pop-Location
