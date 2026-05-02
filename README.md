@@ -1,78 +1,54 @@
-> ⚠️ **Don't click Fork!**
-> 
-> This is a GitHub Template repo. If you want to use this for a plugin, [use this template][new-repo] to make a new repo!
->
-> ![image](https://github.com/goatcorp/SamplePlugin/assets/16760685/d9732094-e1ed-4769-a70b-58ed2b92580c)
+# TreasureRoute
 
-# SamplePlugin
+TreasureRoute is a Dalamud plugin that listens for shared treasure map links in party chat, collects them for the current session, and suggests an efficient per-map route starting from the closest aetheryte.
 
-[![Use This Template badge](https://img.shields.io/badge/Use%20This%20Template-0?logo=github&labelColor=grey)][new-repo]
+## Usage
 
+- Open the main window with `/troute`.
+- Start or stop chat capture from the main window.
+- Ask party members to post their treasure map links; detected marks appear in the list.
+- Press **Recalculate** to build a suggested route, or enable auto-recalculate in settings.
+- Marks are runtime-only and are cleared when the plugin unloads.
 
-Simple example plugin for Dalamud.
+## Settings
 
-This is not designed to be the simplest possible example, but it is also not designed to cover everything you might want to do. For more detailed questions, come ask in [the Discord](https://discord.gg/holdshift).
+- Start listening on plugin load (default: off).
+- Capture Alliance chat in addition to Party/Cross-party.
+- Capture `/say` (default: off).
+- Only capture messages that look treasure-map related (default: off; enable it if your party includes treasure keywords in map-link messages).
+- Auto-recalculate when a new mark is captured.
+- Drop duplicate or near-identical marks and configure the fallback radius.
 
-## Main Points
+## Privacy
 
-* Simple functional plugin
-  * Slash command
-  * Main UI
-  * Settings UI
-  * Image loading
-  * Plugin json
-* Simple, slightly-improved plugin configuration handling
-* Project organization
-  * Copies all necessary plugin files to the output directory
-    * Does not copy dependencies that are provided by dalamud
-    * Output directory can be zipped directly and have exactly what is required
-  * Hides data files from visual studio to reduce clutter
-    * Also allows having data files in different paths than VS would usually allow if done in the IDE directly
+TreasureRoute stores configuration only. Captured marks, including the sender name shown in the UI, live only in memory for the current plugin session and are not saved to the plugin configuration.
 
+## Build
 
-The intention is less that any of this is used directly in other projects, and more to show how similar things can be done.
+Prerequisites:
 
-## How To Use
+- XIVLauncher/Dalamud installed and run at least once.
+- .NET 10 SDK.
+- Dalamud dev files in the default XIVLauncher dev path, or `DALAMUD_HOME` pointing to your Dalamud dev directory.
 
-### Getting Started
+Build with:
 
-To begin, [clone this template repository][new-repo] to your own GitHub account. This will automatically bring in everything you need to get a jumpstart on development. You do not need to fork this repository unless you intend to contribute modifications to it.
+```bash
+dotnet build TreasureRoute.sln -c Debug
+```
 
-Be sure to also check out the [Dalamud Developer Docs][dalamud-docs] for helpful information about building your own plugin. The Developer Docs includes helpful information about all sorts of things, including [how to submit][submit] your newly-created plugin to the official repository. Assuming you use this template repository, the provided project build configuration and license are already chosen to make everything a breeze.
+Release artifacts are produced under:
 
-[new-repo]: https://github.com/new?template_name=SamplePlugin&template_owner=goatcorp
-[dalamud-docs]: https://dalamud.dev
-[submit]: https://dalamud.dev/plugin-publishing/submission
+```text
+TreasureRoute/bin/x64/Release/TreasureRoute/
+```
 
-### Prerequisites
+## Development plugin path
 
-SamplePlugin assumes all the following prerequisites are met:
+In-game, open `/xlsettings` → **Experimental** and add the built plugin DLL as a Dev Plugin Location, for example:
 
-* XIVLauncher, FINAL FANTASY XIV, and Dalamud have all been installed and the game has been run with Dalamud at least once.
-* XIVLauncher is installed to its default directories and configurations.
-  * If a custom path is required for Dalamud's dev directory, it must be set with the `DALAMUD_HOME` environment variable.
-* A .NET Core 8 SDK has been installed and configured, or is otherwise available. (In most cases, the IDE will take care of this.)
+```text
+/home/sojiroh/Proyectos/TreasureRoute/TreasureRoute/bin/x64/Debug/TreasureRoute.dll
+```
 
-### Building
-
-1. Open up `SamplePlugin.sln` in your C# editor of choice (likely [Visual Studio 2022](https://visualstudio.microsoft.com) or [JetBrains Rider](https://www.jetbrains.com/rider/)).
-2. Build the solution. By default, this will build a `Debug` build, but you can switch to `Release` in your IDE.
-3. The resulting plugin can be found at `SamplePlugin/bin/x64/Debug/SamplePlugin.dll` (or `Release` if appropriate.)
-
-### Activating in-game
-
-1. Launch the game and use `/xlsettings` in chat or `xlsettings` in the Dalamud Console to open up the Dalamud settings.
-    * In here, go to `Experimental`, and add the full path to the `SamplePlugin.dll` to the list of Dev Plugin Locations.
-2. Next, use `/xlplugins` (chat) or `xlplugins` (console) to open up the Plugin Installer.
-    * In here, go to `Dev Tools > Installed Dev Plugins`, and the `SamplePlugin` should be visible. Enable it.
-3. You should now be able to use `/pmycommand` (chat) or `pmycommand` (console)!
-
-Note that you only need to add it to the Dev Plugin Locations once (Step 1); it is preserved afterwards. You can disable, enable, or load your plugin on startup through the Plugin Installer.
-
-### Reconfiguring for your own uses
-
-Replace all references to `SamplePlugin` in all the files and filenames with your desired name, then start building the plugin of your dreams. You'll figure it out 😁
-
-Dalamud will load the JSON file (by default, `SamplePlugin/SamplePlugin.json`) next to your DLL and use it for metadata, including the description for your plugin in the Plugin Installer. Make sure to update this with information relevant to _your_ plugin!
-
-All participation in this repository is governed by our [Code of Conduct](https://dalamud.dev/code-of-conduct). If you used AI tooling at any point, review the [AI Usage Policy](https://dalamud.dev/plugin-publishing/ai-policy) and disclose your level of AI use. Entirely AI-generated submissions will be rejected, and undisclosed AI use may result in a ban.
+Then open `/xlplugins` → **Dev Tools** → **Installed Dev Plugins** and enable TreasureRoute.

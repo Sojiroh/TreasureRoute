@@ -1,0 +1,13 @@
+{
+  "Author": "Sojiroh",
+  "Name": "Treasure Route",
+  "Punchline": "Plans the optimal treasure-map route for your party.",
+  "Description": "Listens for treasure-map coordinates posted in party chat, groups them by zone, and shows the shortest aetheryte-rooted route per map. Use /troute to open the window.",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "treasure",
+    "map",
+    "route",
+    "party"
+  ]
+}

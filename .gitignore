@@ -1,4 +1,12 @@
 .vs/
+.idea/
 obj/
 bin/
 *.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
+TestResults/
+artifacts/
