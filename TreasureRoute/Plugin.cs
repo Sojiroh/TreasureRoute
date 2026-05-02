@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Dalamud.Game.Command;
@@ -46,11 +47,14 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(mainWindow);
         WindowSystem.AddWindow(configWindow);
 
-        foreach (var commandName in CommandNames)
+        for (var i = 0; i < CommandNames.Length; i++)
         {
-            CommandManager.AddHandler(commandName, new CommandInfo(OnCommand)
+            CommandManager.AddHandler(CommandNames[i], new CommandInfo(OnCommand)
             {
-                HelpMessage = "Open Treasure Route. Subcommands: help, start, stop, clear, recalc, settings.",
+                HelpMessage = i == 0
+                    ? "Open Treasure Route. Subcommands: help, start, stop, clear, recalc, settings."
+                    : "Alias for /troute.",
+                ShowInHelp = i == 0,
             });
         }
 
@@ -85,7 +89,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        var parts = args.Split(' ', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries);
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var subcommand = parts.FirstOrDefault()?.ToLowerInvariant();
 
         switch (subcommand)
@@ -98,12 +102,26 @@ public sealed class Plugin : IDalamudPlugin
                 PrintHelp();
                 break;
             case "start":
-                chatListener.Start();
-                ChatGui.Print("TreasureRoute: capture started.");
+                if (chatListener.IsListening)
+                {
+                    ChatGui.Print("TreasureRoute: capture is already running.");
+                }
+                else
+                {
+                    chatListener.Start();
+                    ChatGui.Print("TreasureRoute: capture started.");
+                }
                 break;
             case "stop":
-                chatListener.Stop();
-                ChatGui.Print("TreasureRoute: capture stopped.");
+                if (!chatListener.IsListening)
+                {
+                    ChatGui.Print("TreasureRoute: capture is not running.");
+                }
+                else
+                {
+                    chatListener.Stop();
+                    ChatGui.Print("TreasureRoute: capture stopped.");
+                }
                 break;
             case "clear":
                 Marks.Clear();
@@ -111,7 +129,6 @@ public sealed class Plugin : IDalamudPlugin
                 ChatGui.Print("TreasureRoute: cleared collected marks.");
                 break;
             case "recalc":
-            case "recalculate":
                 mainWindow.Recalculate();
                 ChatGui.Print("TreasureRoute: route recalculated.");
                 break;
