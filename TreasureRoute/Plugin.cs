@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
@@ -19,7 +21,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
 
-    private const string CommandName = "/troute";
+    private static readonly string[] CommandNames = ["/troute", "/treasureroute"];
 
     public Configuration Configuration { get; }
     public List<TreasureMark> Marks { get; } = new();
@@ -45,10 +47,16 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.AddWindow(mainWindow);
         WindowSystem.AddWindow(configWindow);
 
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
+        for (var i = 0; i < CommandNames.Length; i++)
         {
-            HelpMessage = "Open the Treasure Route window.",
-        });
+            CommandManager.AddHandler(CommandNames[i], new CommandInfo(OnCommand)
+            {
+                HelpMessage = i == 0
+                    ? "Open Treasure Route. Subcommands: help, start, stop, clear, recalc, settings."
+                    : "Alias for /troute.",
+                ShowInHelp = i == 0,
+            });
+        }
 
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
@@ -72,13 +80,77 @@ public sealed class Plugin : IDalamudPlugin
         mainWindow.Dispose();
         configWindow.Dispose();
 
-        CommandManager.RemoveHandler(CommandName);
+        foreach (var commandName in CommandNames)
+            CommandManager.RemoveHandler(commandName);
     }
 
     public void ToggleMainUi() => mainWindow.Toggle();
     public void ToggleConfigUi() => configWindow.Toggle();
 
-    private void OnCommand(string command, string args) => ToggleMainUi();
+    private void OnCommand(string command, string args)
+    {
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var subcommand = parts.FirstOrDefault()?.ToLowerInvariant();
+
+        switch (subcommand)
+        {
+            case null:
+                ToggleMainUi();
+                break;
+            case "help":
+            case "?":
+                PrintHelp();
+                break;
+            case "start":
+                if (chatListener.IsListening)
+                {
+                    ChatGui.Print("TreasureRoute: capture is already running.");
+                }
+                else
+                {
+                    chatListener.Start();
+                    ChatGui.Print("TreasureRoute: capture started.");
+                }
+                break;
+            case "stop":
+                if (!chatListener.IsListening)
+                {
+                    ChatGui.Print("TreasureRoute: capture is not running.");
+                }
+                else
+                {
+                    chatListener.Stop();
+                    ChatGui.Print("TreasureRoute: capture stopped.");
+                }
+                break;
+            case "clear":
+                Marks.Clear();
+                mainWindow.NotifyMarksChanged();
+                ChatGui.Print("TreasureRoute: cleared collected marks.");
+                break;
+            case "recalc":
+                mainWindow.Recalculate();
+                ChatGui.Print("TreasureRoute: route recalculated.");
+                break;
+            case "settings":
+            case "config":
+                ToggleConfigUi();
+                break;
+            default:
+                ChatGui.PrintError($"TreasureRoute: unknown command '{subcommand}'. Use /troute help.");
+                break;
+        }
+    }
+
+    private static void PrintHelp()
+    {
+        ChatGui.Print("TreasureRoute commands:");
+        ChatGui.Print("/troute - open or close the main window");
+        ChatGui.Print("/troute start|stop - toggle chat capture");
+        ChatGui.Print("/troute clear - clear collected session marks");
+        ChatGui.Print("/troute recalc - recalculate the current route");
+        ChatGui.Print("/troute settings - open settings");
+    }
 
     private void OnMarkDetected(TreasureMark mark)
     {
