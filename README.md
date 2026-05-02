@@ -64,6 +64,54 @@ In-game, open `/xlsettings` → **Experimental** and add the built plugin DLL as
 
 Then open `/xlplugins` → **Dev Tools** → **Installed Dev Plugins** and enable TreasureRoute.
 
+## Custom repository publishing
+
+TreasureRoute publishes its ZIP from this repository, but the Dalamud custom repository metadata is hosted in a separate repository:
+
+```text
+https://github.com/Sojiroh/SojirohPlugins
+```
+
+After a release has run, users can add this custom repository URL in Dalamud:
+
+```text
+https://sojiroh.github.io/SojirohPlugins/pluginmaster.json
+```
+
+In Dalamud, add it through `/xlsettings` → **Experimental** → **Custom Plugin Repositories**.
+
+### Release flow
+
+Before tagging, update `TreasureRoute/TreasureRoute.csproj` `<Version>` if needed. The tag must match that version exactly with a leading `v`. Then create and push a tag:
+
+```bash
+git tag v0.1.0.1
+git push origin v0.1.0.1
+```
+
+The `Release TreasureRoute` workflow will:
+
+1. build the solution,
+2. run tests,
+3. use the DalamudPackager ZIP,
+4. create or update the GitHub Release,
+5. check out `Sojiroh/SojirohPlugins`,
+6. update `entries/TreasureRoute.json`,
+7. regenerate `pluginmaster.json`,
+8. commit and push the metadata update.
+
+The workflow requires a `CUSTOM_REPO_TOKEN` repository secret with write access to `Sojiroh/SojirohPlugins`.
+
+### Multiple plugins
+
+To publish more plugins from the same custom repository URL, add one JSON file per plugin under `SojirohPlugins/entries/` with a unique `InternalName`, then regenerate the pluginmaster in that repository:
+
+```bash
+node scripts/generate-pluginmaster.mjs
+```
+
+Dalamud reads a single JSON array, so one `pluginmaster.json` can list TreasureRoute plus any future plugins.
+
 ## Links
 
 - Source: <https://github.com/Sojiroh/TreasureRoute>
