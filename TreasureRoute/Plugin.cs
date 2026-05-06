@@ -17,9 +17,11 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
 
     private static readonly string[] CommandNames = ["/troute", "/treasureroute"];
 
@@ -30,6 +32,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ChatListener chatListener;
     private readonly AetheryteRepository aetheryteRepository;
     private readonly RouteSolver routeSolver;
+    private readonly ProximityTracker proximityTracker;
     private readonly MainWindow mainWindow;
     private readonly ConfigWindow configWindow;
 
@@ -41,6 +44,8 @@ public sealed class Plugin : IDalamudPlugin
         routeSolver = new RouteSolver(aetheryteRepository);
         chatListener = new ChatListener(ChatGui, Log, Configuration);
         chatListener.MarkDetected += OnMarkDetected;
+        proximityTracker = new ProximityTracker(ClientState, ObjectTable, Framework, DataManager, Log, Configuration, () => Marks);
+        proximityTracker.MarkVisited += OnMarkVisited;
 
         mainWindow = new MainWindow(this, chatListener, routeSolver);
         configWindow = new ConfigWindow(this);
@@ -65,13 +70,17 @@ public sealed class Plugin : IDalamudPlugin
         if (Configuration.ListenOnStart)
             chatListener.Start();
 
+        proximityTracker.Start();
+
         Log.Information("TreasureRoute loaded.");
     }
 
     public void Dispose()
     {
         chatListener.MarkDetected -= OnMarkDetected;
+        proximityTracker.MarkVisited -= OnMarkVisited;
         chatListener.Dispose();
+        proximityTracker.Dispose();
 
         PluginInterface.UiBuilder.Draw -= WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi -= ToggleMainUi;
@@ -159,5 +168,39 @@ public sealed class Plugin : IDalamudPlugin
 
         Marks.Add(mark);
         mainWindow.NotifyMarksChanged();
+    }
+
+    private void OnMarkVisited(TreasureMark mark)
+    {
+        if (Marks.Remove(mark))
+        {
+            ChatGui.Print($"TreasureRoute: Visited {mark.PlaceName} {mark.CoordinateLabel} — removed from list.");
+            mainWindow.NotifyMarksChanged();
+        }
+    }
+
+    public void ShareMarkToParty(TreasureMark mark)
+    {
+        var message = $"{mark.PlaceName} {mark.CoordinateLabel}";
+        ChatGui.Print($"TreasureRoute: Sharing to party — {message}");
+
+        try
+        {
+            var partyPayloads = new Dalamud.Game.Text.SeStringHandling.Payload[]
+            {
+                new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(message)
+            };
+            var seString = new Dalamud.Game.Text.SeStringHandling.SeString(partyPayloads);
+            ChatGui.Print(new Dalamud.Game.Text.XivChatEntry
+            {
+                Message = seString,
+                Type = Dalamud.Game.Text.XivChatType.Party
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to share mark to party chat");
+            ChatGui.PrintError("TreasureRoute: Failed to share to party chat.");
+        }
     }
 }

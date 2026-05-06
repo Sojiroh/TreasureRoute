@@ -75,5 +75,24 @@ public sealed class ConfigWindow : Window, IDisposable
                 configuration.Save();
             }
         }
+
+        ImGui.Separator();
+
+        var autoRemove = configuration.AutoRemoveVisitedMarks;
+        if (ImGui.Checkbox("Auto-remove marks when visited", ref autoRemove))
+        {
+            configuration.AutoRemoveVisitedMarks = autoRemove;
+            configuration.Save();
+        }
+
+        if (configuration.AutoRemoveVisitedMarks)
+        {
+            var visitRadius = configuration.VisitRadius > 1f ? 0.3f : configuration.VisitRadius;
+            if (ImGui.SliderFloat("Visit detection radius (map units)", ref visitRadius, 0.1f, 1f, "%.1f"))
+            {
+                configuration.VisitRadius = visitRadius;
+                configuration.Save();
+            }
+        }
     }
 }

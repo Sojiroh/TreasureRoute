@@ -15,6 +15,8 @@ public class Configuration : IPluginConfiguration
     public bool AutoRecalculate { get; set; } = true;
     public bool DedupeNearbyMarks { get; set; } = true;
     public float DedupeRadius { get; set; } = 0.5f;
+    public bool AutoRemoveVisitedMarks { get; set; } = false;
+    public float VisitRadius { get; set; } = 0.3f;
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
