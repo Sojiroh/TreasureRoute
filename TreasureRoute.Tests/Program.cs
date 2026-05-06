@@ -295,10 +295,33 @@ static IEnumerable<Type> GetTypesSafe(Assembly assembly)
 
 static void EnsureAssemblyLoaded(string assemblyFile)
 {
-    var hookDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".xlcore", "dalamud", "Hooks", "dev");
-    var assemblyPath = Path.Combine(hookDir, assemblyFile);
-    if (!AppDomain.CurrentDomain.GetAssemblies().Any(assembly => string.Equals(assembly.GetName().Name + ".dll", assemblyFile, StringComparison.OrdinalIgnoreCase)))
-        Assembly.LoadFrom(assemblyPath);
+    if (AppDomain.CurrentDomain.GetAssemblies().Any(assembly => string.Equals(assembly.GetName().Name + ".dll", assemblyFile, StringComparison.OrdinalIgnoreCase)))
+        return;
+
+    var searchPaths = new List<string>();
+
+    var dalamudHome = Environment.GetEnvironmentVariable("DALAMUD_HOME");
+    if (!string.IsNullOrWhiteSpace(dalamudHome))
+        searchPaths.Add(Path.Combine(dalamudHome, assemblyFile));
+
+    var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+    if (!string.IsNullOrWhiteSpace(appData))
+        searchPaths.Add(Path.Combine(appData, "XIVLauncher", "addon", "Hooks", "dev", assemblyFile));
+
+    var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    if (!string.IsNullOrWhiteSpace(userProfile))
+        searchPaths.Add(Path.Combine(userProfile, ".xlcore", "dalamud", "Hooks", "dev", assemblyFile));
+
+    foreach (var path in searchPaths)
+    {
+        if (File.Exists(path))
+        {
+            Assembly.LoadFrom(path);
+            return;
+        }
+    }
+
+    throw new FileNotFoundException($"Could not locate {assemblyFile}. Searched: {string.Join(", ", searchPaths)}");
 }
 
 static void SetField<T>(object target, string name, T value)
