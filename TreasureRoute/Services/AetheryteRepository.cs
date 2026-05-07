@@ -22,6 +22,8 @@ internal sealed record AetheryteCacheSource(
     float? CoordY,
     bool FromMapMarker);
 
+internal delegate Vector2 WorldToDisplay(Vector2 world);
+
 public sealed class AetheryteRepository : IAetheryteLookup
 {
     private readonly IDataManager dataManager;
@@ -35,6 +37,33 @@ public sealed class AetheryteRepository : IAetheryteLookup
     {
         this.dataManager = dataManager;
         this.log = log;
+    }
+
+    internal AetheryteRepository(IEnumerable<AetheryteEntry> entries)
+    {
+        dataManager = null!;
+        log = null!;
+        IndexEntries(entries);
+        loaded = true;
+    }
+
+    private void IndexEntries(IEnumerable<AetheryteEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            if (!byTerritory.TryGetValue(entry.TerritoryTypeId, out var list))
+                byTerritory[entry.TerritoryTypeId] = list = new List<AetheryteEntry>();
+            list.Add(entry);
+
+            var key = (entry.TerritoryTypeId, entry.MapId);
+            if (!byTerritoryMap.TryGetValue(key, out var mapList))
+                byTerritoryMap[key] = mapList = new List<AetheryteEntry>();
+            mapList.Add(entry);
+
+            if (!byMap.TryGetValue(entry.MapId, out var mapOnlyList))
+                byMap[entry.MapId] = mapOnlyList = new List<AetheryteEntry>();
+            mapOnlyList.Add(entry);
+        }
     }
 
     public void EnsureLoaded()
@@ -59,6 +88,14 @@ public sealed class AetheryteRepository : IAetheryteLookup
             var skippedCount = 0;
 
             var mapMarkers = dataManager.GetSubrowExcelSheet<MapMarker>();
+            var aetheryteMarkers = new Dictionary<uint, MapMarker>();
+            if (mapMarkers != null)
+            {
+                foreach (var subrows in mapMarkers)
+                    foreach (var marker in subrows)
+                        if (marker.DataType == 3)
+                            aetheryteMarkers.TryAdd(marker.DataKey.RowId, marker);
+            }
 
             foreach (var aetheryte in aetherytes)
             {
@@ -79,18 +116,11 @@ public sealed class AetheryteRepository : IAetheryteLookup
                     float? coordY = null;
                     bool fromMapMarker = false;
 
-                    if (mapMarkers != null)
+                    if (map is not null && aetheryteMarkers.TryGetValue(aetheryte.RowId, out var marker))
                     {
-                        foreach (var marker in mapMarkers.SelectMany(m => m))
-                        {
-                            if (marker.DataType == 3 && marker.DataKey.RowId == aetheryte.RowId && map is not null)
-                            {
-                                coordX = MarkerToMap(marker.X, map.Value.SizeFactor);
-                                coordY = MarkerToMap(marker.Y, map.Value.SizeFactor);
-                                fromMapMarker = true;
-                                break;
-                            }
-                        }
+                        coordX = MarkerToMap(marker.X, map.Value.SizeFactor);
+                        coordY = MarkerToMap(marker.Y, map.Value.SizeFactor);
+                        fromMapMarker = true;
                     }
 
                     if (!coordX.HasValue || !coordY.HasValue)
@@ -167,33 +197,13 @@ public sealed class AetheryteRepository : IAetheryteLookup
                 }
             }
 
-            var (entries, buildSkippedCount) = BuildCache(sources, mapId => mapsById.TryGetValue(mapId, out var map) ? map : null);
+            var (entries, buildSkippedCount) = BuildCache(sources, mapId =>
+                mapsById.TryGetValue(mapId, out var map)
+                    ? new WorldToDisplay(world => MapUtil.WorldToMap(world, map))
+                    : null);
             skippedCount += buildSkippedCount;
 
-            foreach (var entry in entries)
-            {
-                if (!byTerritory.TryGetValue(entry.TerritoryTypeId, out var list))
-                {
-                    list = new List<AetheryteEntry>();
-                    byTerritory[entry.TerritoryTypeId] = list;
-                }
-                list.Add(entry);
-
-                var key = (entry.TerritoryTypeId, entry.MapId);
-                if (!byTerritoryMap.TryGetValue(key, out var mapList))
-                {
-                    mapList = new List<AetheryteEntry>();
-                    byTerritoryMap[key] = mapList;
-                }
-                mapList.Add(entry);
-
-                if (!byMap.TryGetValue(entry.MapId, out var mapOnlyList))
-                {
-                    mapOnlyList = new List<AetheryteEntry>();
-                    byMap[entry.MapId] = mapOnlyList;
-                }
-                mapOnlyList.Add(entry);
-            }
+            IndexEntries(entries);
 
             loaded = true;
             log.Information($"Cached aetherytes across {byTerritory.Count} territories.");
@@ -207,7 +217,7 @@ public sealed class AetheryteRepository : IAetheryteLookup
         }
     }
 
-    internal static (List<AetheryteEntry> entries, int skippedCount) BuildCache(IEnumerable<AetheryteCacheSource> sources, Func<uint, Map?> mapResolver)
+    internal static (List<AetheryteEntry> entries, int skippedCount) BuildCache(IEnumerable<AetheryteCacheSource> sources, Func<uint, WorldToDisplay?> mapResolver)
     {
         var entries = new List<AetheryteEntry>();
         var skippedCount = 0;
@@ -232,14 +242,14 @@ public sealed class AetheryteRepository : IAetheryteLookup
                 }
                 else
                 {
-                    var map = mapResolver(source.MapId.Value);
-                    if (map is null)
+                    var convert = mapResolver(source.MapId.Value);
+                    if (convert is null)
                     {
                         skippedCount++;
                         continue;
                     }
 
-                    var display = MapUtil.WorldToMap(new Vector2(source.CoordX.Value, source.CoordY.Value), map.Value);
+                    var display = convert(new Vector2(source.CoordX.Value, source.CoordY.Value));
                     displayX = display.X;
                     displayY = display.Y;
                 }

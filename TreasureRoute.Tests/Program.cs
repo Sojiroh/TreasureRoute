@@ -1,10 +1,10 @@
-using System.Buffers.Binary;
 using System.Numerics;
-using System.Linq.Expressions;
 using System.Reflection;
-using System.Runtime.Serialization;
+using System.Runtime.Loader;
 using TreasureRoute.Models;
 using TreasureRoute.Services;
+
+RegisterDalamudResolver();
 
 var tests = new (string Name, Action Test)[]
 {
@@ -13,6 +13,7 @@ var tests = new (string Name, Action Test)[]
     ("solver groups by territory and map", SolverGroupsByTerritoryAndMap),
     ("aetheryte lookup prefers map then territory fallback", AetheryteLookupPrefersMapThenFallback),
     ("aetheryte cache skips malformed rows without dropping valid rows", AetheryteCacheSkipsMalformedRowsWithoutDroppingValidRows),
+    ("aetheryte cache passes marker coordinates through", AetheryteCachePassesMarkerCoordinatesThrough),
     ("aetheryte cache supports territory fallback candidates", AetheryteCacheSupportsTerritoryFallbackCandidates),
     ("aetheryte cache supports map fallback candidates", AetheryteCacheSupportsMapFallbackCandidates),
     ("aetheryte lookup still returns null without candidates", AetheryteLookupStillReturnsNullWithoutCandidates),
@@ -76,18 +77,34 @@ static void AetheryteLookupPrefersMapThenFallback()
 
 static void AetheryteCacheSkipsMalformedRowsWithoutDroppingValidRows()
 {
-    var sources = CreateSourceArray(
-        CreateCacheSource(1, "Valid", 9001, 9002, 50.34146f, 85.07317f),
-        CreateCacheSource(2, "Missing territory", null, 9002, 50.34146f, 85.07317f),
-        CreateCacheSource(3, "Missing map", 9001, null, 50.34146f, 85.07317f),
-        CreateCacheSource(4, "Missing coords", 9001, 9002, null, 85.07317f),
-        CreateCacheSource(5, "Unresolved map", 9001, 9999, 50.34146f, 85.07317f));
+    var sources = new[]
+    {
+        new AetheryteCacheSource(1, "Valid", 9001, 9002, 50.34146f, 85.07317f, false),
+        new AetheryteCacheSource(2, "Missing territory", null, 9002, 50.34146f, 85.07317f, false),
+        new AetheryteCacheSource(3, "Missing map", 9001, null, 50.34146f, 85.07317f, false),
+        new AetheryteCacheSource(4, "Missing coords", 9001, 9002, null, 85.07317f, false),
+        new AetheryteCacheSource(5, "Unresolved map", 9001, 9999, 50.34146f, 85.07317f, false),
+    };
 
-    var (entries, skippedCount) = BuildCache(sources, 9002);
+    var (entries, skippedCount) = AetheryteRepository.BuildCache(sources, IdentityResolverFor(9002));
 
     Assert(entries.Count == 1, "one valid entry expected");
     Assert(skippedCount == 4, "four malformed rows should be skipped");
     Assert(entries[0].RowId == 1 && entries[0].Name == "Valid", "valid row should survive cache build");
+}
+
+static void AetheryteCachePassesMarkerCoordinatesThrough()
+{
+    var sources = new[]
+    {
+        new AetheryteCacheSource(1, "FromMarker", 9001, 9002, 12.5f, 13.5f, FromMapMarker: true),
+    };
+
+    var (entries, skippedCount) = AetheryteRepository.BuildCache(sources, _ => null);
+
+    Assert(entries.Count == 1, "marker-sourced entry should not need a map resolver");
+    Assert(skippedCount == 0, "marker-sourced entry should not be skipped");
+    Assert(entries[0].DisplayX == 12.5f && entries[0].DisplayY == 13.5f, "marker coordinates should pass through unchanged");
 }
 
 static void AetheryteCacheSupportsTerritoryFallbackCandidates()
@@ -132,208 +149,42 @@ static void ProximityUsesDisplayedMapCoordinates()
 static TreasureMark Mark(uint territory, uint map, float x, float y, int rawX = 0, int rawY = 0, string? placeName = null)
     => new(territory, map, rawX, rawY, x, y, placeName ?? $"T{territory}M{map}", "tester", 0);
 
-static Array CreateSourceArray(params object[] sources)
-{
-    var sourceType = GetCacheSourceType();
-    var array = Array.CreateInstance(sourceType, sources.Length);
-    for (var i = 0; i < sources.Length; i++)
-        array.SetValue(sources[i], i);
-    return array;
-}
-
-static object CreateCacheSource(uint rowId, string name, uint? territoryTypeId, uint? mapId, float? coordX, float? coordY, bool fromMapMarker = false)
-    => Activator.CreateInstance(GetCacheSourceType(), BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new object?[] { rowId, name, territoryTypeId, mapId, coordX, coordY, fromMapMarker }, null)!
-        ?? throw new InvalidOperationException("failed to create cache source");
-
-static (List<AetheryteEntry> Entries, int SkippedCount) BuildCache(Array sources, uint mapId)
-{
-    EnsureAssemblyLoaded("Dalamud.dll");
-    EnsureAssemblyLoaded("Lumina.dll");
-    EnsureAssemblyLoaded("Lumina.Excel.dll");
-
-    var method = typeof(AetheryteRepository).GetMethod("BuildCache", BindingFlags.Static | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException("BuildCache seam not found");
-
-    var mapType = method.GetParameters()[1].ParameterType.GenericTypeArguments[1].GenericTypeArguments[0];
-    var map = CreateSyntheticMap(mapType);
-
-    var nullableMapType = typeof(Nullable<>).MakeGenericType(mapType);
-    var delegateType = typeof(Func<,>).MakeGenericType(typeof(uint), nullableMapType);
-    var idParameter = Expression.Parameter(typeof(uint), "mapId");
-    var body = Expression.Condition(
-        Expression.Equal(idParameter, Expression.Constant(mapId)),
-        Expression.Convert(Expression.Constant(map, mapType), nullableMapType),
-        Expression.Default(nullableMapType));
-    var mapResolver = Expression.Lambda(delegateType, body, idParameter).Compile();
-
-    var result = (ValueTuple<List<AetheryteEntry>, int>)method.Invoke(null, new object?[] { sources, mapResolver })!;
-    return (result.Item1, result.Item2);
-}
-
-static object CreateSyntheticMap(Type mapType)
-{
-    var excelPageType = GetRuntimeType("Lumina.Excel.ExcelPage");
-    var pageCtor = excelPageType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        .Single(ctor => ctor.GetParameters().Length == 3);
-    var mapCtor = mapType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        .Single(ctor => ctor.GetParameters().Length == 3);
-
-    var offsets = ResolveMapOffsets(mapType, excelPageType, pageCtor, mapCtor);
-    var pageData = new byte[256];
-    WriteSentinel(pageData, offsets.OffsetX, 1000, GetMemberSize(mapType, "OffsetX"));
-    WriteSentinel(pageData, offsets.OffsetY, 2000, GetMemberSize(mapType, "OffsetY"));
-    WriteSentinel(pageData, offsets.SizeFactor, 100, GetMemberSize(mapType, "SizeFactor"));
-
-    var page = pageCtor.Invoke(new object?[] { null, pageData, (ushort)0 }) ?? throw new InvalidOperationException("failed to create excel page");
-    return mapCtor.Invoke(new object?[] { page, 0u, 0u }) ?? throw new InvalidOperationException("failed to create map");
-}
-
-static (int OffsetX, int OffsetY, int SizeFactor) ResolveMapOffsets(Type mapType, Type excelPageType, ConstructorInfo pageCtor, ConstructorInfo mapCtor)
-{
-    int FindOffset(string memberName, int seed)
-    {
-        var property = mapType.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException($"{mapType.Name}.{memberName} property not found");
-
-        var writeSize = property.PropertyType == typeof(short) || property.PropertyType == typeof(ushort) ? 2 : 4;
-        for (var offset = 0; offset <= 124; offset += writeSize)
-        {
-            var pageData = new byte[256];
-            WriteSentinel(pageData, offset, seed, writeSize);
-
-            var page = pageCtor.Invoke(new object?[] { null, pageData, (ushort)0 }) ?? throw new InvalidOperationException("failed to create excel page");
-            var map = mapCtor.Invoke(new object?[] { page, 0u, 0u }) ?? throw new InvalidOperationException("failed to create map");
-            var actual = property.GetValue(map);
-            if (MatchesSentinel(actual, seed, property.PropertyType))
-                return offset;
-        }
-
-        throw new InvalidOperationException($"Unable to resolve {mapType.Name}.{memberName} offset");
-    }
-
-    return (FindOffset("OffsetX", 1000), FindOffset("OffsetY", 2000), FindOffset("SizeFactor", 100));
-}
-
-static bool MatchesSentinel(object? value, int seed, Type propertyType)
-{
-    if (propertyType == typeof(short)) return value is short actual && actual == seed;
-    if (propertyType == typeof(ushort)) return value is ushort unsignedActual && unsignedActual == seed;
-    if (propertyType == typeof(int)) return value is int intActual && intActual == seed;
-    if (propertyType == typeof(uint)) return value is uint uintActual && uintActual == (uint)seed;
-    return Equals(value, Convert.ChangeType(seed, propertyType));
-}
-
-static int GetMemberSize(Type mapType, string name)
-{
-    var property = mapType.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException($"{mapType.Name}.{name} property not found");
-    return property.PropertyType == typeof(short) || property.PropertyType == typeof(ushort) ? 2 : 4;
-}
-
-static void WriteSentinel(byte[] data, int offset, int value, int size)
-{
-    if (size == 2)
-        BinaryPrimitives.WriteInt16BigEndian(data.AsSpan(offset, size), (short)value);
-    else
-        BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(offset, size), value);
-}
+static Func<uint, WorldToDisplay?> IdentityResolverFor(uint mapId)
+    => id => id == mapId ? new WorldToDisplay(v => v) : null;
 
 static AetheryteRepository CreateRepository(IEnumerable<AetheryteEntry> entries)
-{
-    var repository = (AetheryteRepository)FormatterServices.GetUninitializedObject(typeof(AetheryteRepository));
-    var territoryGroups = entries.GroupBy(entry => entry.TerritoryTypeId).ToDictionary(group => group.Key, group => group.ToList());
-    var territoryMapGroups = entries.GroupBy(entry => (entry.TerritoryTypeId, entry.MapId)).ToDictionary(group => group.Key, group => group.ToList());
-    var mapGroups = entries.GroupBy(entry => entry.MapId).ToDictionary(group => group.Key, group => group.ToList());
-
-    SetField(repository, "byTerritory", territoryGroups);
-    SetField(repository, "byTerritoryMap", territoryMapGroups);
-    SetField(repository, "byMap", mapGroups);
-    SetField(repository, "loaded", true);
-
-    return repository;
-}
-
-static Type GetCacheSourceType()
-    => typeof(AetheryteRepository).Assembly.GetType("TreasureRoute.Services.AetheryteCacheSource", true)!;
-
-static Type GetRuntimeType(string fullName)
-{
-    var loaded = AppDomain.CurrentDomain.GetAssemblies()
-        .SelectMany(assembly => GetTypesSafe(assembly))
-        .FirstOrDefault(type => type.FullName == fullName);
-    if (loaded is not null)
-        return loaded;
-
-    foreach (var assemblyName in typeof(AetheryteRepository).Assembly.GetReferencedAssemblies())
-    {
-        try
-        {
-            var assembly = Assembly.Load(assemblyName);
-            var type = GetTypesSafe(assembly).FirstOrDefault(candidate => candidate.FullName == fullName);
-            if (type is not null)
-                return type;
-        }
-        catch
-        {
-        }
-    }
-
-    throw new InvalidOperationException($"{fullName} not found");
-}
-
-static IEnumerable<Type> GetTypesSafe(Assembly assembly)
-{
-    try
-    {
-        return assembly.GetTypes();
-    }
-    catch
-    {
-        return Array.Empty<Type>();
-    }
-}
-
-static void EnsureAssemblyLoaded(string assemblyFile)
-{
-    if (AppDomain.CurrentDomain.GetAssemblies().Any(assembly => string.Equals(assembly.GetName().Name + ".dll", assemblyFile, StringComparison.OrdinalIgnoreCase)))
-        return;
-
-    var searchPaths = new List<string>();
-
-    var dalamudHome = Environment.GetEnvironmentVariable("DALAMUD_HOME");
-    if (!string.IsNullOrWhiteSpace(dalamudHome))
-        searchPaths.Add(Path.Combine(dalamudHome, assemblyFile));
-
-    var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-    if (!string.IsNullOrWhiteSpace(appData))
-        searchPaths.Add(Path.Combine(appData, "XIVLauncher", "addon", "Hooks", "dev", assemblyFile));
-
-    var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    if (!string.IsNullOrWhiteSpace(userProfile))
-        searchPaths.Add(Path.Combine(userProfile, ".xlcore", "dalamud", "Hooks", "dev", assemblyFile));
-
-    foreach (var path in searchPaths)
-    {
-        if (File.Exists(path))
-        {
-            Assembly.LoadFrom(path);
-            return;
-        }
-    }
-
-    throw new FileNotFoundException($"Could not locate {assemblyFile}. Searched: {string.Join(", ", searchPaths)}");
-}
-
-static void SetField<T>(object target, string name, T value)
-{
-    var field = target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-        ?? throw new InvalidOperationException($"{target.GetType().Name}.{name} not found");
-    field.SetValue(target, value);
-}
+    => new AetheryteRepository(entries);
 
 static void Assert(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
+}
+
+static void RegisterDalamudResolver()
+{
+    var searchDirs = new List<string>();
+
+    var dalamudHome = Environment.GetEnvironmentVariable("DALAMUD_HOME");
+    if (!string.IsNullOrWhiteSpace(dalamudHome)) searchDirs.Add(dalamudHome);
+
+    var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+    if (!string.IsNullOrWhiteSpace(appData))
+        searchDirs.Add(Path.Combine(appData, "XIVLauncher", "addon", "Hooks", "dev"));
+
+    var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    if (!string.IsNullOrWhiteSpace(userProfile))
+        searchDirs.Add(Path.Combine(userProfile, ".xlcore", "dalamud", "Hooks", "dev"));
+
+    AssemblyLoadContext.Default.Resolving += (context, name) =>
+    {
+        foreach (var dir in searchDirs)
+        {
+            var path = Path.Combine(dir, name.Name + ".dll");
+            if (File.Exists(path))
+                return context.LoadFromAssemblyPath(path);
+        }
+        return null;
+    };
 }
 
 internal sealed class FakeLookup : IAetheryteLookup

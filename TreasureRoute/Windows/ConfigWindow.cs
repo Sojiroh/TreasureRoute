@@ -87,8 +87,8 @@ public sealed class ConfigWindow : Window, IDisposable
 
         if (configuration.AutoRemoveVisitedMarks)
         {
-            var visitRadius = configuration.VisitRadius > 1f ? 0.3f : configuration.VisitRadius;
-            if (ImGui.SliderFloat("Visit detection radius (map units)", ref visitRadius, 0.1f, 1f, "%.1f"))
+            var visitRadius = configuration.VisitRadius;
+            if (ImGui.SliderFloat("Visit detection radius (map units)", ref visitRadius, 0.1f, Configuration.MaxVisitRadius, "%.1f"))
             {
                 configuration.VisitRadius = visitRadius;
                 configuration.Save();

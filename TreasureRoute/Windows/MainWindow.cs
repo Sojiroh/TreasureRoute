@@ -94,12 +94,12 @@ public sealed class MainWindow : Window, IDisposable
             ImGui.TableSetupColumn("Map");
             ImGui.TableSetupColumn("Coords");
             ImGui.TableSetupColumn("Posted by");
-            ImGui.TableSetupColumn("##share", ImGuiTableColumnFlags.WidthFixed, 45 * ImGuiHelpers.GlobalScale);
+            ImGui.TableSetupColumn("##copy", ImGuiTableColumnFlags.WidthFixed, 45 * ImGuiHelpers.GlobalScale);
             ImGui.TableSetupColumn("##remove", ImGuiTableColumnFlags.WidthFixed, 50 * ImGuiHelpers.GlobalScale);
             ImGui.TableHeadersRow();
 
             TreasureMark? toRemove = null;
-            TreasureMark? toShare = null;
+            TreasureMark? toCopy = null;
             for (var i = 0; i < plugin.Marks.Count; i++)
             {
                 var mark = plugin.Marks[i];
@@ -109,8 +109,8 @@ public sealed class MainWindow : Window, IDisposable
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(mark.CoordinateLabel);
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(mark.Sender);
                 ImGui.TableNextColumn();
-                if (ImGui.SmallButton("Share"))
-                    toShare = mark;
+                if (ImGui.SmallButton("Copy"))
+                    toCopy = mark;
                 ImGui.TableNextColumn();
                 if (ImGui.SmallButton("Remove"))
                     toRemove = mark;
@@ -124,9 +124,9 @@ public sealed class MainWindow : Window, IDisposable
                 NotifyMarksChanged();
             }
 
-            if (toShare != null)
+            if (toCopy != null)
             {
-                plugin.ShareMarkToParty(toShare);
+                plugin.CopyMarkToClipboard(toCopy);
             }
         }
     }

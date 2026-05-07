@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
@@ -39,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        Configuration.Migrate();
 
         aetheryteRepository = new AetheryteRepository(DataManager, Log);
         routeSolver = new RouteSolver(aetheryteRepository);
@@ -179,28 +181,19 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    public void ShareMarkToParty(TreasureMark mark)
+    public void CopyMarkToClipboard(TreasureMark mark)
     {
         var message = $"{mark.PlaceName} {mark.CoordinateLabel}";
-        ChatGui.Print($"TreasureRoute: Sharing to party — {message}");
 
         try
         {
-            var partyPayloads = new Dalamud.Game.Text.SeStringHandling.Payload[]
-            {
-                new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(message)
-            };
-            var seString = new Dalamud.Game.Text.SeStringHandling.SeString(partyPayloads);
-            ChatGui.Print(new Dalamud.Game.Text.XivChatEntry
-            {
-                Message = seString,
-                Type = Dalamud.Game.Text.XivChatType.Party
-            });
+            ImGui.SetClipboardText(message);
+            ChatGui.Print($"TreasureRoute: Copied to clipboard — paste in party chat: {message}");
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to share mark to party chat");
-            ChatGui.PrintError("TreasureRoute: Failed to share to party chat.");
+            Log.Error(ex, "Failed to copy mark to clipboard");
+            ChatGui.PrintError("TreasureRoute: Failed to copy to clipboard.");
         }
     }
 }

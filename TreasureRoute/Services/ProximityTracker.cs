@@ -10,8 +10,6 @@ namespace TreasureRoute.Services;
 
 public sealed class ProximityTracker : IDisposable
 {
-    private const float LegacyVisitRadius = 0.3f;
-
     private readonly IClientState clientState;
     private readonly IObjectTable objectTable;
     private readonly IFramework framework;
@@ -90,7 +88,8 @@ public sealed class ProximityTracker : IDisposable
                 continue;
 
             var playerDisplay = MapUtil.WorldToMap(new Vector2(playerPos.X, playerPos.Z), map);
-            if (IsWithinVisitRadius(playerDisplay, mark, GetVisitRadius()))
+            var radius = Math.Max(Configuration.MinVisitRadius, configuration.VisitRadius);
+            if (IsWithinVisitRadius(playerDisplay, mark, radius))
             {
                 toRemove = mark;
                 break;
@@ -104,9 +103,6 @@ public sealed class ProximityTracker : IDisposable
             MarkVisited?.Invoke(toRemove);
         }
     }
-
-    private float GetVisitRadius()
-        => configuration.VisitRadius > 1f ? LegacyVisitRadius : Math.Max(0.05f, configuration.VisitRadius);
 
     private bool TryGetMap(uint mapId, out Map map)
     {
